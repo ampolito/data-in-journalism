@@ -1,0 +1,330 @@
+---
+title: "Final Project: NYPD Crime Complaint Analysis"
+author: "Alison Polito"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+##1. Load packages into library
+```{r}
+rm(list=ls())
+library(tidyverse)
+library(dplyr)
+library(readr)
+library(lubridate)
+library(leaflet)
+
+```
+
+## Overview
+
+In 2016, the city of New York created a [dataset of crime complaints](https://data.cityofnewyork.us/Public-Safety/NYPD-Complaint-Data-Current-Year-To-Date-/5uac-w243) that documents criminal incidents reported to the New York City Police Department — resulting in a report of all valid felony, misdemeanor, and violation crimes. Updated as of November 8th, 2023, the data features 415,310 rows, each representing a criminal complaint filed within the city. Specific details about the type of crime, location, time of enforcement, and demographic information of victims and suspects are captured with 36 different variables. The data provides a comprehensive look into the frequency and types of crime that occur in the city. This data is released based on the date the incident was reported, not necessarily when it occurred. Therefore, it is possible that some crimes occurred years before they were reported to the NYPD. 
+
+New York is ranked the largest city in the country, with over 8.5 million resident. While New York is safer compared to many large U.S. cities, such as St. Louis, Missouri and Detroit, Michigan, understanding the crime outlook has benefits for the improvement of general public safety and the promotion of economic development. This NYC Crime Complaint analysis aims to produce a holistic picture of crime — exploring spacial, temporal, and socio-demographic trends present in the data. For those who live in the city or plan to visit, this information is useful for community awareness. When exposing patterns in crime, it is possible to enforce policies and strategies to prevent future crime. 
+
+## Main Findings
+
+## Variable Explanations 
+
+- `CMPLNT_NUM` Randomly generated persistent ID for each complaint.
+- `ADDR_PCT_CD`The precinct in which the incident occurred.
+- `BORO_NM` The name of the borough in which the incident occurred.
+- `CMPLNT_FR_DT` Exact date of occurrence for the reported event.
+- `CMPLNT_FR_TM` Exact time of occurrence for the reported event. 
+- `CMPLNT_TO_DT` Ending date of occurrence for the reported event, if exact time of occurrence is unknown.
+- `CMPLNT_TO_TM`Ending time of occurrence for the reported event, if exact time of occurrence is unknown.
+- `CRM_ATPT_CPTD_CD` Indicator of whether crime was successfully completed or attempted, but failed or was interrupted prematurely.
+- `JURISDICTION_CODE` Jurisdiction responsible for incident. Either internal, like Police(0), Transit(1), and Housing(2); or external(3), like Correction, Port Authority, etc.
+- `JURIS_DESC` Description of the jurisdiction code
+- `KY_CD` Three digit offense classification code
+- `LAW_CAT_CD` Level of offense: felony, misdemeanor, violation
+- `LOC_OF_OCCUR_DESC` Specific location of occurrence in or around the premises; inside, opposite of, front of, rear of
+- `OFNS_DESC` Description of offense corresponding with key code
+- `PARKS_NM` Name of NYC park, playground or greenspace of occurrence, if applicable (state parks are not included)
+- `PATROL_BORO` The name of the patrol borough in which the incident occurred
+- `PD_CD` Three digit internal classification code (more granular than Key Code)  
+- `PD_DESC` Description of internal classification corresponding with PD code (more granular than Offense Description)
+- `premise_desc` Specific description of premises; grocery store, residence, street, etc.
+- `SUSP_AGE_GROUP` Suspect’s Age Group
+- `SUSP_RACE` Suspect's Race Description 
+- `SUSP_SEX` Suspect's Sex Description 
+- `VIC_AGE_GROUP` Victim’s Age Group
+- `VIC_RACE` Victim’s Race Description
+- `VIC_SEX`  Victim's Sex Description 
+- `X_COORD_CD`X-coordinate for New York State Plane Coordinate System, Long Island Zone, NAD 83, units feet (FIPS 3104)
+- `Y_COORD_CD` Y-coordinate for New York State Plane Coordinate System, Long Island Zone, NAD 83, units feet (FIPS 3104)
+- `Latitude` Midblock Latitude coordinate for Global Coordinate System, WGS 1984, decimal degrees (EPSG 4326)
+- `Longitude` Midblock Longitude coordinate for Global Coordinate System, WGS 1984, decimal degrees (EPSG 4326)
+- `Lat_Lon` Latitude & Longitude 
+
+
+Data source: https://data.cityofnewyork.us/Public-Safety/NYPD-Complaint-Data-Current-Year-To-Date-/5uac-w243
+
+Upon inspecting my data, there are quite a few NA values. To make things easier, I am going to read in some of the problematic columns as character values and then use the  lubridate package to specify their structures later. 
+
+```{r}
+crime <- read_csv("NYPD_Complaint_Data2_Current__Year_To_Date__20231210.csv", 
+                   col_types = cols(
+    CMPLNT_NUM = col_character(),
+    ADDR_PCT_CD = col_double(),
+    BORO_NM = col_character(),
+    CMPLNT_FR_DT = col_character(),
+    CMPLNT_TO_DT = col_character()
+    ))
+View(crime)
+```
+
+## Data Preparation
+
+First, I am de-selecting rows that I deem unnecessary to my analysis due to excessive NA values. I am also renaming some of the column names and offense descriptions to be clearer. 
+```{r}
+crime <- crime %>%
+  select(-HADEVELOPT, -HOUSING_PSA, -PARKS_NM, -RPT_DT, -STATION_NAME, -TRANSIT_DISTRICT) %>%
+  rename(
+    complaint_num = CMPLNT_NUM,
+    precinct_num = ADDR_PCT_CD,
+    date_start = CMPLNT_FR_DT,
+    date_end = CMPLNT_TO_DT,
+    offense_level = LAW_CAT_CD,
+    offense_desc = OFNS_DESC, 
+    premise_desc = PREM_TYP_DESC
+    ) %>%
+  mutate(offense_desc = ifelse(offense_desc == 'OFF. AGNST PUB ORD SENSBLTY &', 'OFFENSE AGAINST PUBLIC ORDER/ADMIN', offense_desc),
+         offense_desc = ifelse(offense_desc == 'CRIMINAL MISCHIEF & RELATED OF', 'VANDALISM & RELATED', offense_desc),
+         offense_desc = ifelse(offense_desc == 'HARRASSMENT 2', 'HARASSMENT', offense_desc)) 
+```
+
+
+I am using the mdy() function from the lubridate package to translate the date_start values into the proper date format. 
+```{r}
+# Date Formatting 
+crime$date_start <- mdy(crime$date_start) 
+ # Ensuring it is the correct data types and is formatted correct as dates  
+str(crime$date_start)
+```
+
+The date_end column is going to require further cleaning. It has NA values throughout so I have decided to flag these missing values by creating a new column and then using a placeholder value so that I do not have to delete the entire row, since there are other important pieces of information.
+```{r}
+# First flagging the missing values by creating a new column
+crime$date_end_missing <- is.na(crime$date_end)
+
+# Adding placeholder value -- I chose '12/10/1999'
+placeholder <- "12/10/1999"
+crime$date_end[is.na(crime$date_end)] <- placeholder 
+
+# Finally converting the column to the proper date format
+crime$date_end <- mdy(crime$date_end)
+str(crime$date_end)
+```
+
+I've encountered a new problem — there are year typos such as 1022 and 1023 in the CMPLNT_FR_DT column. I suspect they are supposed to be 2022 and 2023, but to simplify the data and preserve data integrity, I have decided to focus my analysis on data from 2017 and onwards.
+```{r}
+# Specifying dates to include 
+crime <- crime %>%
+filter(date_start >= as.Date("2017-01-01"),
+         date_end >= as.Date("2017-01-01") | date_end == as.Date("1999-12-10"))
+```
+
+
+There are a few more NA values I want to take care of in the suspect demographic columns. I am going to fill them in with "UNKNOWN" as that is the values for missing information in the victim information columns.
+```{r}
+crime <- crime %>% 
+  mutate(SUSP_AGE_GROUP = ifelse(SUSP_AGE_GROUP == "(null)", "UNKNOWN", SUSP_AGE_GROUP),
+         SUSP_RACE = ifelse(SUSP_RACE == "(null)", "UNKNOWN", SUSP_RACE),
+         SUSP_SEX = ifelse(SUSP_SEX == "(null)", "UNKNOWN", SUSP_SEX),
+         VIC_AGE_GROUP = ifelse(VIC_AGE_GROUP == "(null)", "UNKNOWN", VIC_AGE_GROUP),
+         VIC_SEX = ifelse(VIC_SEX == "(null)", "UNKNOWN", VIC_SEX),
+         VIC_RACE = ifelse(VIC_RACE == "(null)", "UNKNOWN", VIC_RACE))
+str(crime$SUSP_AGE_GROUP)
+```
+
+First, I'm curious to compare the percentage of crimes attempted to crimes completed. What percentage of crime complaints were attempted?  
+```{r}
+crime_compare <- crime %>%
+  group_by(CRM_ATPT_CPTD_CD) %>%
+  summarize(count = n())
+crime_compare
+```
+
+**Attempted crimes only make up about 1.46% of the total crime complaints.** 
+
+## Analysis 
+
+With a substantial amount of crime, what are the most common types in New York City? 
+```{r}
+crime_type <- crime %>%
+  group_by(offense_desc) %>%
+  summarize(crime_count = n()) %>%
+  arrange(desc(crime_count)) %>%
+  slice_max(order_by=crime_count, n=10)
+          
+  
+crime_type <- crime_type[order(-crime_type$crime_count), ]
+
+
+crime_plot <- ggplot(crime_type, aes(x=crime_count, y=reorder(offense_desc, crime_count))) +
+  geom_bar(stat ="identity", fill="#191970") +
+  labs(title="Top Crimes in New York City",
+       x="Crime Count",
+       y="Offense Description") +
+  theme(axis.text.y=element_text(hjust=1))
+crime_plot
+```
+
+**Petit larceny and harassment make up the majority of offenses, with robbery making up the smallest proportion of crime.**
+
+
+What was the most common crime in each year from 2017-2023?
+```{r}
+crime_year <- crime %>%
+  mutate(year = year(date_start)) %>%
+  group_by(year, offense_desc) %>%
+  summarize(totalcrime= n()) %>%
+  slice_max(totalcrime, n=1) 
+
+crime_year
+```
+
+**In 2023, petit larceny was the most common crime with 80524 cases. However, I have found an important limitation in this data — there are many more complaints stored for 2023 compared to the past years.**
+
+
+How common is each of the types of offenses? 
+```{r}
+offense_freq <- crime %>%
+  count(offense_level) %>%
+  arrange(desc(n))
+
+ggplot(offense_freq, aes(x=reorder(offense_level,-n), y=n)) + 
+  geom_bar(stat="identity", fill="#FF6600") +
+  labs(title="Frequency of Offense Types",
+       x="Offense Type",
+       y="Frequency") +
+  theme_minimal() 
+```
+
+**Misdemeanors are the most common type of offense.** In New York, a violation is defined as any non-criminal offense, other than traffic infractions. The maximum punishment includes 15 days in jail and a $250 fine. Example: disorderly conduct. 
+
+## Investigating Victim Demographics 
+
+I am curious about the victim demographics. Who made up the largest proportion of victims since 2017? 
+```{r}
+vic_age <- crime %>%
+  mutate(VIC_AGE_GROUP = ifelse(VIC_AGE_GROUP == "UNKNOWN", NA, VIC_AGE_GROUP)) %>%
+  group_by(VIC_AGE_GROUP) %>%
+  filter(!is.na(VIC_AGE_GROUP) & !(VIC_AGE_GROUP < 0 | VIC_AGE_GROUP > 66)) %>%
+  count() %>%
+  filter(n>5) 
+vic_age
+```
+
+
+Which sex made up the largest proportion of victims? 
+```{r}
+vic_sex <- crime %>%
+  mutate(VIC_SEX = ifelse(VIC_SEX == "UNKNOWN", NA, VIC_SEX)) %>%
+  group_by(VIC_SEX) %>%
+  count() %>%
+# In the VIC_SEX column, there are the following values: D, E, F, M, L, U (D=Business/Organization, E=PSNY/People of the State of New York, F=Female, M=Male). There is no documentation for L (n=3176) or U (n=1). I've decided to just select Male and Female for my analysis. 
+filter(VIC_SEX == "M" | VIC_SEX == "F") 
+vic_sex
+``` 
+
+Which races made up the largest proportion of victims? 
+```{r}
+vic_race <- crime %>%
+  group_by(VIC_RACE) %>%
+  count()
+vic_race 
+vic_race_plot <- ggplot(vic_race, aes(x = reorder(VIC_RACE, -n), y=n)) +
+  geom_bar(stat="identity", fill="#A9A9A9") +
+  labs(y="Count") +
+  labs(x="Race") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+vic_race_plot
+```
+ 
+The data contains a high count of 'UNKNOWN' values for the victim race. Excluding this result, **the most common victims of crime were individuals of black and white Hispanic races, females, and those in the 25-44 age group.** However, the data shows that females and males made up a similar proportion of crime victims -- there is approximately 9.36% difference between the two groups. 
+
+
+## Investigating Suspect Demographics 
+
+I am curious about the suspect demographics. Who made up the largest proportion of suspects since 2017?
+```{r}
+susp_age <- crime %>%
+  mutate(SUSP_AGE_GROUP = ifelse(SUSP_AGE_GROUP == "UNKNOWN", NA, SUSP_AGE_GROUP)) %>%
+  group_by(SUSP_AGE_GROUP) %>%
+  filter(!is.na(SUSP_AGE_GROUP) & !(SUSP_AGE_GROUP > 66 | SUSP_AGE_GROUP < 0)) %>%
+ group_by(SUSP_AGE_GROUP) %>%
+ count() %>%
+filter(SUSP_AGE_GROUP %in% c("18-24", "25-44", "45-64", "65+"))
+susp_age  
+```
+
+Which sex made up the largest proportion of suspects? 
+```{r}
+susp_sex <- crime %>%
+  mutate(SUSP_SEX = ifelse(SUSP_SEX == "UNKNOWN", NA, SUSP_SEX)) %>%
+  group_by(SUSP_SEX) %>%
+  count() %>%
+  filter(SUSP_SEX == "M" | SUSP_SEX == "F") 
+susp_sex
+```
+
+Which races made up the largest proportion of suspects?  
+```{r}
+susp_race <- crime %>%
+  group_by(SUSP_RACE) %>%
+  count()
+susp_race 
+ 
+susp_race_plot <- ggplot(susp_race, aes(x = reorder(SUSP_RACE, -n), y=n)) +
+  geom_bar(stat="identity", fill="gray") +
+  labs(y="Count") +
+  labs(x="Race") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+susp_race_plot
+```
+
+Similarly to the victim age demographics, **the 25-44 age group made up the largest proportion of suspects.** The sex demographics varied the most, **with 21.65% of total suspects being female.** The race demographics closely resemble the victim results except Black individuals made up a larger proportion of suspects, whereas white Hispanics, white individuals, and the last 3 categories comprised a smaller proportion of the suspect pool. 
+
+
+Where did most crime occur? 
+```{r}
+crime_location <- crime %>%
+  group_by(Latitude, Longitude) %>%
+  summarize(crime_count = n()) %>%
+  arrange(desc(crime_count))
+
+top_10 <- head(crime_location, 10)
+top_10
+```
+
+I want to visualize this on a map. Where in the city did the most crime occur? 
+```{r}
+crime_map <- leaflet() %>%
+  addTiles() %>%
+  addCircleMarkers(
+    data=top_10,
+    lat=~Latitude,
+    lng=~Longitude,
+    popup=~paste("Crime Count: ", crime_count),
+    color=~factor(rank(-crime_count)),
+    fillOpacity = 0.7,
+    radius=10
+  ) 
+crime_map
+```
+
+**The point with the highest crime count (1320) is located on the border of the Garment District, just south of Times Square. Outside of Manhattan, Brooklyn and Queens had lower crime counts ranging from 530-693.** 
+
+## References
+
+[New York State Law Penal Law](https://ypdcrime.com/penal.law/violations.php#:~:text=%22Violation%22%20means%20an%20offense%2C,fifteen%20days%20cannot%20be%20imposed.)
+
